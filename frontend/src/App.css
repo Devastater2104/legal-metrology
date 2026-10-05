@@ -1,3 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+
+  color: #172033;
+  background: #f8fafc;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.govt-hindi {
+  font-family: "Noto Sans Devanagari", "Noto Sans", sans-serif;
+}
+
 :root {
   --lm-navy: #0f2747;
   --lm-navy-dark: #0a1c33;
