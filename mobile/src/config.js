@@ -10,5 +10,5 @@ export const ENDPOINTS = {
   // FastAPI service without changing the backend architecture.
   assignedApplications: '/officer/applications',
   submitInspection: (id) => `/officer/applications/${id}/inspection`,
-  extractInspectionInfo: (id) => `/officer/applications/${id}/inspection/ocr`,
+  extractInspectionInfo: (id) => `/officer/applications/${id}/ocr`,
 };

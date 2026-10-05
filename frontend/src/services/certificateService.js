@@ -64,3 +64,21 @@ export async function downloadCertificatePdf(certificateId, certificateNumber, t
   link.click()
   URL.revokeObjectURL(url)
 }
+
+
+export function getAdminCertificationShops(token) {
+  return request('/admin/certification-shops', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export function issueShopCertificates(shopId, token) {
+  return request(`/admin/shops/${shopId}/certificates`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}

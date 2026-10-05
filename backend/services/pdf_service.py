@@ -10,7 +10,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from config import PUBLIC_APP_URL
-from models import Certificate, Inspection, Instrument, User
+from models import Certificate, Inspection, Instrument, User, Shop
 from services.compliance_service import certificate_state
 
 
@@ -170,6 +170,8 @@ def generate_certificate_pdf(
     instrument: Instrument,
     inspection: Inspection,
     officer: User,
+    shop: Shop | None = None,
+    shop_instruments: list[dict] | None = None,
 ) -> bytes:
     buffer = io.BytesIO()
 
@@ -322,7 +324,7 @@ def generate_certificate_pdf(
     document.drawCentredString(
         width / 2,
         y,
-        "Instrument verification record",
+        "Shop-level verification record",
     )
 
     # -----------------------------------------------------------------------
@@ -382,66 +384,282 @@ def generate_certificate_pdf(
     y -= card_height + 20
 
     # -----------------------------------------------------------------------
-    # Holder / instrument information
+    # Shop / instrument information
     # -----------------------------------------------------------------------
 
     content_x = margin + 16
     content_width = width - 2 * margin - 32
 
-    y = draw_section_header(
-        document,
-        "Certificate & Instrument Details",
-        content_x,
-        y,
-        content_width,
-    )
-
-    column_gap = 18
-    column_width = (content_width - column_gap) / 2
-
-    left_x = content_x
-    right_x = content_x + column_width + column_gap
-
-    left_y = y
-    right_y = y
-
-    left_fields = [
-        ("Owner / Business", owner.name),
-        ("Instrument Type", instrument.instrument_type),
-        ("Manufacturer", instrument.manufacturer),
-        ("Model", instrument.model or "-"),
-    ]
-
-    right_fields = [
-        ("Serial Number", instrument.serial_number),
-        ("Location", instrument.location or "-"),
-        ("Measurement", inspection.measurement or "-"),
-        ("Inspection Result", inspection.result or "-"),
-    ]
-
-    for label, value in left_fields:
-        left_y = draw_field(
+    # Backward compatibility:
+    # Existing individual certificates still render their original details.
+    # Shop certificates pass shop_instruments and render every instrument.
+    if shop is not None and shop_instruments:
+        y = draw_section_header(
             document,
-            label,
-            value,
-            left_x,
-            left_y,
-            label_width=92,
-            value_width=column_width - 92,
+            "Business / Shop Details",
+            content_x,
+            y,
+            content_width,
         )
 
-    for label, value in right_fields:
-        right_y = draw_field(
+        shop_fields_left = [
+            ("Business / Shop", shop.name),
+            ("GST Number", shop.gst_number or "-"),
+        ]
+
+        shop_fields_right = [
+            ("Owner / Business", owner.name),
+            ("Address", shop.address or "-"),
+        ]
+
+        column_gap = 18
+        column_width = (content_width - column_gap) / 2
+
+        left_x = content_x
+        right_x = content_x + column_width + column_gap
+
+        left_y = y
+        right_y = y
+
+        for label, value in shop_fields_left:
+            left_y = draw_field(
+                document,
+                label,
+                value,
+                left_x,
+                left_y,
+                label_width=92,
+                value_width=column_width - 92,
+            )
+
+        for label, value in shop_fields_right:
+            right_y = draw_field(
+                document,
+                label,
+                value,
+                right_x,
+                right_y,
+                label_width=92,
+                value_width=column_width - 92,
+            )
+
+        y = min(left_y, right_y) - 8
+
+        # ---------------------------------------------------------------
+        # Complete instrument table
+        # ---------------------------------------------------------------
+
+        y = draw_section_header(
             document,
-            label,
-            value,
-            right_x,
-            right_y,
-            label_width=92,
-            value_width=column_width - 92,
+            f"Verified Instruments ({len(shop_instruments)})",
+            content_x,
+            y,
+            content_width,
         )
 
-    y = min(left_y, right_y) - 8
+        table_x = content_x
+        table_width = content_width
+
+        columns = [
+            ("#", 22),
+            ("Instrument", 82),
+            ("Manufacturer", 72),
+            ("Model", 58),
+            ("Serial Number", 92),
+            ("Capacity", 52),
+            ("Result", 45),
+        ]
+
+        row_height = 30
+        header_height = 25
+
+        def draw_table_header(current_y):
+            document.setFillColor(NAVY)
+            document.rect(
+                table_x,
+                current_y - header_height,
+                table_width,
+                header_height,
+                fill=1,
+                stroke=0,
+            )
+
+            x_cursor = table_x + 5
+
+            document.setFillColor(WHITE)
+            document.setFont("Helvetica-Bold", 6.5)
+
+            for title, col_width in columns:
+                document.drawString(
+                    x_cursor,
+                    current_y - 16,
+                    title,
+                )
+                x_cursor += col_width
+
+            return current_y - header_height
+
+        def draw_instrument_row(current_y, index, record):
+            instrument_item = record["instrument"]
+            inspection_item = record["inspection"]
+
+            values = [
+                str(index),
+                instrument_item.instrument_type or "-",
+                instrument_item.manufacturer or "-",
+                instrument_item.model or "-",
+                instrument_item.serial_number or "-",
+                instrument_item.capacity or "-",
+                inspection_item.result or "-",
+            ]
+
+            document.setFillColor(
+                LIGHT_SLATE if index % 2 == 0 else WHITE
+            )
+            document.rect(
+                table_x,
+                current_y - row_height,
+                table_width,
+                row_height,
+                fill=1,
+                stroke=0,
+            )
+
+            document.setStrokeColor(BORDER)
+            document.rect(
+                table_x,
+                current_y - row_height,
+                table_width,
+                row_height,
+                fill=0,
+                stroke=1,
+            )
+
+            x_cursor = table_x + 5
+
+            for value, (_, col_width) in zip(values, columns):
+                document.setFillColor(
+                    GREEN if value == "PASS" else DARK
+                )
+                document.setFont(
+                    "Helvetica-Bold" if value == "PASS" else "Helvetica",
+                    6.5,
+                )
+
+                lines = wrap(str(value), width=max(7, int(col_width / 5.2)))
+
+                document.drawString(
+                    x_cursor,
+                    current_y - 12,
+                    lines[0][:20],
+                )
+
+                if len(lines) > 1:
+                    document.drawString(
+                        x_cursor,
+                        current_y - 21,
+                        lines[1][:20],
+                    )
+
+                x_cursor += col_width
+
+            return current_y - row_height
+
+        y = draw_table_header(y)
+
+        for index, record in enumerate(shop_instruments, start=1):
+            if y - row_height < margin + 190:
+                document.showPage()
+
+                document.setFillColor(WHITE)
+                document.rect(
+                    0,
+                    0,
+                    width,
+                    height,
+                    fill=1,
+                    stroke=0,
+                )
+
+                document.setFillColor(NAVY)
+                document.setFont("Helvetica-Bold", 14)
+                document.drawString(
+                    margin + 16,
+                    height - 50,
+                    "CERTIFICATE OF VERIFICATION",
+                )
+
+                document.setFillColor(SLATE)
+                document.setFont("Helvetica", 8)
+                document.drawString(
+                    margin + 16,
+                    height - 65,
+                    f"Certificate {certificate.certificate_number}",
+                )
+
+                y = height - 85
+                y = draw_table_header(y)
+
+            y = draw_instrument_row(y, index, record)
+
+        y -= 12
+
+    else:
+        # Original single-instrument certificate layout.
+        y = draw_section_header(
+            document,
+            "Certificate & Instrument Details",
+            content_x,
+            y,
+            content_width,
+        )
+
+        column_gap = 18
+        column_width = (content_width - column_gap) / 2
+
+        left_x = content_x
+        right_x = content_x + column_width + column_gap
+
+        left_y = y
+        right_y = y
+
+        left_fields = [
+            ("Owner / Business", owner.name),
+            ("Instrument Type", instrument.instrument_type),
+            ("Manufacturer", instrument.manufacturer),
+            ("Model", instrument.model or "-"),
+        ]
+
+        right_fields = [
+            ("Serial Number", instrument.serial_number),
+            ("Location", instrument.location or "-"),
+            ("Measurement", inspection.measurement or "-"),
+            ("Inspection Result", inspection.result or "-"),
+        ]
+
+        for label, value in left_fields:
+            left_y = draw_field(
+                document,
+                label,
+                value,
+                left_x,
+                left_y,
+                label_width=92,
+                value_width=column_width - 92,
+            )
+
+        for label, value in right_fields:
+            right_y = draw_field(
+                document,
+                label,
+                value,
+                right_x,
+                right_y,
+                label_width=92,
+                value_width=column_width - 92,
+            )
+
+        y = min(left_y, right_y) - 8
 
     # -----------------------------------------------------------------------
     # Verification validity
@@ -527,6 +745,7 @@ def generate_certificate_pdf(
     y -= 68
 
     # -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
     # Inspection officer
     # -----------------------------------------------------------------------
 
@@ -545,9 +764,9 @@ def generate_certificate_pdf(
 
     document.roundRect(
         content_x,
-        officer_box_y - 48,
+        officer_box_y - 50,
         content_width,
-        48,
+        50,
         6,
         fill=1,
         stroke=1,
@@ -557,7 +776,7 @@ def generate_certificate_pdf(
     document.setFont("Helvetica-Bold", 7)
     document.drawString(
         content_x + 12,
-        officer_box_y - 16,
+        officer_box_y - 15,
         "INSPECTING OFFICER",
     )
 
@@ -565,167 +784,190 @@ def generate_certificate_pdf(
     document.setFont("Helvetica-Bold", 10)
     document.drawString(
         content_x + 12,
-        officer_box_y - 34,
+        officer_box_y - 31,
         officer.name,
     )
 
+    # Officer licence number
+    officer_license = getattr(
+        officer,
+        "license_number",
+        None,
+    ) or "Not available"
+
     document.setFillColor(SLATE)
-    document.setFont("Helvetica", 8)
+    document.setFont("Helvetica", 7)
+    document.drawString(
+        content_x + 12,
+        officer_box_y - 43,
+        f"License No.: {officer_license}",
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 7.5)
     document.drawRightString(
         content_x + content_width - 12,
-        officer_box_y - 34,
+        officer_box_y - 31,
         "Legal Metrology Inspection Record",
     )
 
-    y -= 65
+    y = officer_box_y - 62
 
     # -----------------------------------------------------------------------
-    # Verification block with QR
+    # Certificate verification + QR
     # -----------------------------------------------------------------------
 
-    verify_height = 118
+    verify_height = 88
     verify_y = y
 
     document.setFillColor(LIGHT_BLUE)
+    document.setStrokeColor(BORDER)
+
     document.roundRect(
         content_x,
         verify_y - verify_height,
         content_width,
         verify_height,
-        8,
+        7,
         fill=1,
-        stroke=0,
+        stroke=1,
     )
 
     document.setFillColor(NAVY)
-    document.setFont("Helvetica-Bold", 11)
+    document.setFont("Helvetica-Bold", 9)
     document.drawString(
-        content_x + 16,
-        verify_y - 22,
+        content_x + 14,
+        verify_y - 18,
         "VERIFY THIS CERTIFICATE",
     )
 
     document.setFillColor(SLATE)
-    document.setFont("Helvetica", 8)
+    document.setFont("Helvetica", 7)
 
     verification_text = (
-        "Scan the QR code to verify the certificate status "
-        "and authenticity record online."
+        "Scan the QR code to verify the shop certificate "
+        "and its authenticity status online."
     )
 
     draw_wrapped_text(
         document,
         verification_text,
-        content_x + 16,
-        verify_y - 39,
-        max_chars=58,
+        content_x + 14,
+        verify_y - 34,
+        max_chars=50,
         font="Helvetica",
-        size=8,
-        leading=11,
+        size=7,
+        leading=9,
         color=SLATE,
     )
 
-    # URL
+    # Verification URL
     document.setFillColor(BLUE)
-    document.setFont("Helvetica", 7)
+    document.setFont("Helvetica", 6)
 
-    url_lines = wrap(verification_url, width=65)
+    url_lines = wrap(
+        verification_url,
+        width=50,
+    )
 
-    url_y = verify_y - 67
+    url_y = verify_y - 59
 
     for line in url_lines[:2]:
         document.drawString(
-            content_x + 16,
+            content_x + 14,
             url_y,
             line,
         )
-        url_y -= 10
+        url_y -= 8
 
-    # QR
-    qr_size = 82
+    # QR code is deliberately kept inside its own clean area.
+    qr_size = 60
+
+    qr_x = (
+        content_x
+        + content_width
+        - qr_size
+        - 14
+    )
+
+    qr_y = (
+        verify_y
+        - qr_size
+        - 13
+    )
 
     document.drawImage(
         ImageReader(qr_buffer),
-        content_x + content_width - qr_size - 14,
-        verify_y - qr_size - 17,
+        qr_x,
+        qr_y,
         width=qr_size,
         height=qr_size,
         preserveAspectRatio=True,
         mask="auto",
     )
 
-    y -= verify_height + 18
-
-    # -----------------------------------------------------------------------
-    # Integrity hash
-    # -----------------------------------------------------------------------
-
-    hash_height = 55
-
-    document.setFillColor(LIGHT_SLATE)
-    document.setStrokeColor(BORDER)
-
-    document.roundRect(
-        content_x,
-        y - hash_height,
-        content_width,
-        hash_height,
-        6,
-        fill=1,
-        stroke=1,
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 5.5)
+    document.drawCentredString(
+        qr_x + qr_size / 2,
+        verify_y - verify_height + 7,
+        "SCAN TO VERIFY",
     )
 
+    y = verify_y - verify_height - 10
+
+    # -----------------------------------------------------------------------
+    # Integrity reference
+    # -----------------------------------------------------------------------
+
     document.setFillColor(SLATE)
-    document.setFont("Helvetica-Bold", 7)
+    document.setFont("Helvetica-Bold", 6)
+
     document.drawString(
-        content_x + 12,
-        y - 15,
+        content_x,
+        y,
         "DOCUMENT INTEGRITY • SHA-256",
     )
 
-    document.setFillColor(DARK)
-    document.setFont("Courier", 7)
-
     integrity_hash = certificate.integrity_hash or "-"
 
-    hash_lines = wrap(
-        integrity_hash,
-        width=92,
+    document.setFillColor(DARK)
+    document.setFont("Courier", 5.5)
+
+    # Keep the hash on one compact line where possible.
+    hash_display = integrity_hash[:80]
+
+    document.drawString(
+        content_x + 118,
+        y,
+        hash_display,
     )
 
-    hash_y = y - 31
-
-    for line in hash_lines[:2]:
-        document.drawString(
-            content_x + 12,
-            hash_y,
-            line,
-        )
-        hash_y -= 9
+    y -= 15
 
     # -----------------------------------------------------------------------
-    # Footer
+    # Clean footer
     # -----------------------------------------------------------------------
 
-    footer_y = margin + 23
+    footer_y = margin + 20
 
     document.setStrokeColor(BORDER)
     document.setLineWidth(0.7)
 
     document.line(
         content_x,
-        footer_y + 13,
+        footer_y + 11,
         content_x + content_width,
-        footer_y + 13,
+        footer_y + 11,
     )
 
     document.setFillColor(SLATE)
-    document.setFont("Helvetica", 6.5)
+    document.setFont("Helvetica", 5.8)
 
     document.drawString(
         content_x,
         footer_y,
-        "Digital certificate generated by the Legal Metrology platform.",
+        "Digital certificate generated by the e-MānakSetu Legal Metrology platform.",
     )
 
     document.drawRightString(
@@ -734,11 +976,11 @@ def generate_certificate_pdf(
         "Prototype system • SHA-256 integrity metadata",
     )
 
-    document.setFont("Helvetica-Oblique", 6.5)
+    document.setFont("Helvetica-Oblique", 5.8)
 
     document.drawString(
         content_x,
-        footer_y - 10,
+        footer_y - 9,
         "This document is not an official government digital signature.",
     )
 
@@ -748,13 +990,18 @@ def generate_certificate_pdf(
 
     document.drawRightString(
         content_x + content_width,
-        footer_y - 10,
+        footer_y - 9,
         f"Generated {generated_at}",
     )
 
-    # -----------------------------------------------------------------------
     # Finish
     # -----------------------------------------------------------------------
+
+    document.showPage()
+    document.save()
+
+    return buffer.getvalue()
+
 
     document.showPage()
     document.save()

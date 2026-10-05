@@ -9,6 +9,7 @@ from models import (
     Certificate,
     Inspection,
     Instrument,
+    Shop,
     User,
     VerificationApplication,
 )
@@ -295,6 +296,327 @@ def issue_certificate(
     db.commit()
 
     return certificate
+
+
+
+@router.get("/certification-shops")
+def list_certification_shops(
+    current_user: User = Depends(require_role("ADMIN")),
+    db: Session = Depends(get_db),
+):
+    shops = db.query(Shop).order_by(Shop.id.desc()).all()
+    result = []
+
+    for shop in shops:
+        instruments = (
+            db.query(Instrument)
+            .filter(Instrument.shop_id == shop.id)
+            .order_by(Instrument.id.asc())
+            .all()
+        )
+
+        rows = []
+
+        for instrument in instruments:
+            application = (
+                db.query(VerificationApplication)
+                .filter(VerificationApplication.instrument_id == instrument.id)
+                .order_by(VerificationApplication.id.desc())
+                .first()
+            )
+            if not application:
+                continue
+
+            inspection = (
+                db.query(Inspection)
+                .filter(Inspection.application_id == application.id)
+                .order_by(Inspection.id.desc())
+                .first()
+            )
+
+            certificate = (
+                db.query(Certificate)
+                .filter(Certificate.application_id == application.id)
+                .order_by(Certificate.id.desc())
+                .first()
+            )
+
+            rows.append({
+                "instrument_id": instrument.id,
+                "application_id": application.id,
+                "instrument_type": instrument.instrument_type,
+                "measurement_type": instrument.measurement_type,
+                "manufacturer": instrument.manufacturer,
+                "model": instrument.model,
+                "serial_number": instrument.serial_number,
+                "capacity": instrument.capacity,
+                "accuracy_class": instrument.accuracy_class,
+                "application_status": application.status,
+                "application_priority": application.priority,
+                "inspection": (
+                    {
+                        "id": inspection.id,
+                        "result": inspection.result,
+                        "measurement": inspection.measurement,
+                        "observations": inspection.observations,
+                        "latitude": inspection.latitude,
+                        "longitude": inspection.longitude,
+                        "captured_at": inspection.captured_at,
+                        "inspected_at": inspection.inspected_at,
+                        "officer_id": inspection.officer_id,
+                    }
+                    if inspection else None
+                ),
+                "certificate": (
+                    {
+                        "id": certificate.id,
+                        "certificate_number": certificate.certificate_number,
+                        "status": certificate_state(certificate),
+                        "issued_at": certificate.issued_at,
+                        "expires_at": certificate.expires_at,
+                    }
+                    if certificate else None
+                ),
+            })
+
+        if not rows:
+            continue
+
+        passed = sum(
+            1 for row in rows
+            if row["inspection"] and row["inspection"]["result"] == "PASS"
+        )
+        failed = sum(
+            1 for row in rows
+            if row["inspection"] and row["inspection"]["result"] == "FAIL"
+        )
+        ready = sum(
+            1 for row in rows
+            if row["inspection"]
+            and row["inspection"]["result"] == "PASS"
+            and not row["certificate"]
+        )
+
+        result.append({
+            "shop": {
+                "id": shop.id,
+                "name": shop.name,
+                "gst_number": shop.gst_number,
+                "address": shop.address,
+                "latitude": shop.latitude,
+                "longitude": shop.longitude,
+            },
+            "total_instruments": len(rows),
+            "passed": passed,
+            "failed": failed,
+            "certificates_ready": ready,
+            "instruments": rows,
+        })
+
+    return result
+
+
+@router.post("/shops/{shop_id}/certificates")
+def issue_shop_certificates(
+    shop_id: int,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: Session = Depends(get_db),
+):
+    """
+    Issue exactly ONE certificate for a shop.
+
+    Every instrument in the shop must have a completed PASS inspection.
+    If even one instrument is missing, pending, or FAIL, nothing is created.
+    """
+
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+
+    if not shop:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shop not found",
+        )
+
+    instruments = (
+        db.query(Instrument)
+        .filter(Instrument.shop_id == shop.id)
+        .order_by(Instrument.id.asc())
+        .all()
+    )
+
+    if not instruments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No instruments found for this shop",
+        )
+
+    # Validate EVERY instrument before creating anything.
+    instrument_records = []
+
+    for instrument in instruments:
+        application = (
+            db.query(VerificationApplication)
+            .filter(
+                VerificationApplication.instrument_id == instrument.id
+            )
+            .order_by(VerificationApplication.id.desc())
+            .first()
+        )
+
+        if not application:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Shop cannot be certified. Instrument "
+                    f"{instrument.serial_number} has no verification application."
+                ),
+            )
+
+        inspection = (
+            db.query(Inspection)
+            .filter(
+                Inspection.application_id == application.id
+            )
+            .order_by(Inspection.id.desc())
+            .first()
+        )
+
+        if not inspection:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Shop cannot be certified. Instrument "
+                    f"{instrument.serial_number} has no completed inspection."
+                ),
+            )
+
+        if inspection.result != "PASS":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Shop cannot be certified. Instrument "
+                    f"{instrument.serial_number} has result "
+                    f"{inspection.result}, not PASS."
+                ),
+            )
+
+        instrument_records.append(
+            {
+                "instrument": instrument,
+                "application": application,
+                "inspection": inspection,
+            }
+        )
+
+    # Check whether this shop already has a certificate.
+    application_ids = [
+        record["application"].id
+        for record in instrument_records
+    ]
+
+    existing_shop_certificate = (
+        db.query(Certificate)
+        .filter(
+            Certificate.application_id.in_(application_ids)
+        )
+        .order_by(Certificate.id.asc())
+        .first()
+    )
+
+    if existing_shop_certificate:
+        return {
+            "id": existing_shop_certificate.id,
+            "application_id": existing_shop_certificate.application_id,
+            "certificate_number": existing_shop_certificate.certificate_number,
+            "issued_by": existing_shop_certificate.issued_by,
+            "status": certificate_state(existing_shop_certificate),
+            "issued_at": existing_shop_certificate.issued_at,
+            "expires_at": existing_shop_certificate.expires_at,
+            "integrity_hash": existing_shop_certificate.integrity_hash,
+            "revoked_at": existing_shop_certificate.revoked_at,
+            "revocation_reason": existing_shop_certificate.revocation_reason,
+        }
+
+    # ALL instruments passed.
+    # Create EXACTLY ONE certificate.
+    anchor = instrument_records[0]
+    application = anchor["application"]
+    instrument = anchor["instrument"]
+    inspection = anchor["inspection"]
+
+    certificate = Certificate(
+        application_id=application.id,
+        certificate_number="PENDING",
+        issued_by=current_user.id,
+        expires_at=(
+            datetime.utcnow()
+            + timedelta(days=CERTIFICATE_VALIDITY_DAYS)
+        ),
+    )
+
+    db.add(certificate)
+    db.flush()
+
+    certificate.certificate_number = (
+        f"LM-{certificate.issued_at.year}-{certificate.id:06d}"
+    )
+
+    owner = (
+        db.query(User)
+        .filter(User.id == application.user_id)
+        .first()
+    )
+
+    certificate.integrity_hash = calculate_integrity_hash(
+        certificate,
+        owner,
+        instrument,
+        inspection,
+    )
+
+    # Every instrument application is covered by this ONE shop certificate.
+    for record in instrument_records:
+        record["application"].status = "CERTIFICATE_ISSUED"
+
+    db.commit()
+    db.refresh(certificate)
+
+    audit_service.log(
+        db,
+        "SHOP_CERTIFICATE_ISSUED",
+        "certificate",
+        certificate.id,
+        current_user,
+    )
+
+    notification_service.create(
+        db,
+        application.user_id,
+        "Shop certificate issued",
+        (
+            f"Certificate {certificate.certificate_number} has been issued "
+            f"for {shop.name}, covering "
+            f"{len(instrument_records)} instruments."
+        ),
+        "CERTIFICATE_ISSUED",
+        "certificate",
+        certificate.id,
+    )
+
+    db.commit()
+
+    return {
+        "id": certificate.id,
+        "application_id": certificate.application_id,
+        "certificate_number": certificate.certificate_number,
+        "issued_by": certificate.issued_by,
+        "status": certificate_state(certificate),
+        "issued_at": certificate.issued_at,
+        "expires_at": certificate.expires_at,
+        "integrity_hash": certificate.integrity_hash,
+        "revoked_at": certificate.revoked_at,
+        "revocation_reason": certificate.revocation_reason,
+    }
 
 
 @router.get(

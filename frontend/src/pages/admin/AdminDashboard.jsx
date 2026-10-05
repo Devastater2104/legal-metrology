@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import SmartAssignment from './SmartAssignment'
+import ShopCertificationReview from './ShopCertificationReview'
 
 import { useAuth } from '../../context/AuthContext'
 import NotificationBell from '../../components/NotificationBell'
@@ -527,103 +528,7 @@ function AdminDashboard() {
         </section>
 
         {/* Inspection review */}
-        <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">
-            Inspection review
-          </h2>
-
-          {!error && inspections.length === 0 && (
-            <p className="mt-4 text-slate-600">
-              No inspections submitted yet.
-            </p>
-          )}
-
-          {!error && inspections.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">
-                      Application
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      Measurement
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      Result
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      Location
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-200">
-                  {inspections.map((inspection) => (
-                    <tr key={inspection.id}>
-                      <td className="px-3 py-2">
-                        #{inspection.application_id}
-                      </td>
-
-                      <td className="px-3 py-2">
-                        {inspection.measurement}
-                      </td>
-
-                      <td className="px-3 py-2">
-                        {inspection.result}
-                      </td>
-
-                      <td className="px-3 py-2">
-                        {inspection.latitude != null &&
-                        inspection.longitude != null
-                          ? `${Number(
-                              inspection.latitude,
-                            ).toFixed(6)}, ${Number(
-                              inspection.longitude,
-                            ).toFixed(6)}`
-                          : '-'}
-                      </td>
-
-                      <td className="px-3 py-2">
-                        {inspection.result === 'PASS' &&
-                        applicationStatusById.get(
-                          inspection.application_id,
-                        ) !== 'CERTIFICATE_ISSUED' ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleIssueCertificate(
-                                inspection.application_id,
-                              )
-                            }
-                            disabled={
-                              assigningId ===
-                              inspection.application_id
-                            }
-                            className="rounded bg-blue-900 px-3 py-1 text-white disabled:opacity-50"
-                          >
-                            Issue certificate
-                          </button>
-                        ) : inspection.result === 'PASS' ? (
-                          <span className="text-green-700">
-                            Certificate issued
-                          </span>
-                        ) : (
-                          <span className="text-slate-500">
-                            Not eligible
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+        <ShopCertificationReview token={token} />
 
         {/* Certificates */}
         <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

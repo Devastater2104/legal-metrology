@@ -210,6 +210,10 @@ export default function InspectionScreen() {
   }
 
   async function submit() {
+    if (submitting) {
+      return;
+    }
+
     if (!location) {
       setError('Capture the inspection location before submitting.');
       return;
@@ -260,11 +264,10 @@ export default function InspectionScreen() {
         token,
       );
 
-      Alert.alert(
-        'Inspection submitted',
-        'The inspection was successfully submitted.',
-        [{ text: 'OK', onPress: () => navigation.popToTop() }],
-      );
+      // Inspection submitted successfully.
+      // Return immediately to the officer dashboard so the same
+      // application cannot accidentally be submitted again.
+      navigation.popToTop();
     } catch (e) {
       setError(e.message || 'Unable to submit inspection.');
     } finally {

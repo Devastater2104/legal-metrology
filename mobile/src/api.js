@@ -22,12 +22,27 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
-    const message =
-      typeof data === 'object' && data?.detail
-        ? data.detail
-        : typeof data === 'string' && data
-          ? data
-          : `Request failed with status ${response.status}`
+    let message
+
+    if (typeof data === 'object' && data?.detail) {
+      if (typeof data.detail === 'string') {
+        message = data.detail
+      } else if (Array.isArray(data.detail)) {
+        message = data.detail
+          .map((item) => {
+            if (typeof item === 'string') return item
+            if (item?.msg) return item.msg
+            return JSON.stringify(item)
+          })
+          .join('; ')
+      } else {
+        message = JSON.stringify(data.detail)
+      }
+    } else if (typeof data === 'string' && data) {
+      message = data
+    } else {
+      message = `Request failed with status ${response.status}`
+    }
 
     throw new Error(message)
   }
@@ -82,13 +97,30 @@ export async function submitInspection(applicationId, payload, token) {
 export async function extractInspectionInfo(applicationId, imageUri, token) {
   const formData = new FormData()
 
-  const filename = imageUri.split('/').pop() || 'inspection.jpg'
+  const filename =
+    imageUri.split('/').pop()?.split('?')[0] || 'inspection.jpg'
 
-  formData.append('photo', {
-    uri: imageUri,
-    name: filename,
-    type: 'image/jpeg',
-  })
+  // React Native Web needs an actual Blob for multipart uploads.
+  // Native React Native uses the { uri, name, type } format.
+  if (typeof window !== 'undefined') {
+    const imageResponse = await fetch(imageUri)
+    const imageBlob = await imageResponse.blob()
+
+    formData.append(
+      'photo',
+      imageBlob,
+      filename.toLowerCase().endsWith('.jpg') ||
+        filename.toLowerCase().endsWith('.jpeg')
+        ? filename
+        : 'inspection.jpg',
+    )
+  } else {
+    formData.append('photo', {
+      uri: imageUri,
+      name: filename,
+      type: 'image/jpeg',
+    })
+  }
 
   return request(ENDPOINTS.extractInspectionInfo(applicationId), {
     method: 'POST',
