@@ -4,7 +4,14 @@ from sqlalchemy.orm import Session
 
 from auth import require_role
 from database import get_db
-from models import Inspection, InspectionPhoto, Instrument, User, VerificationApplication
+from models import (
+    Inspection,
+    InspectionPhoto,
+    Instrument,
+    Shop,
+    User,
+    VerificationApplication,
+)
 from schemas import ApplicationResponse, InspectionCreate, InspectionResponse, OCRFieldResponse
 from services import audit_service, notification_service, ocr_service
 from services.analytics_service import officer_workload
@@ -27,12 +34,61 @@ def list_assigned_applications(
     current_user: User = Depends(require_role("OFFICER")),
     db: Session = Depends(get_db),
 ):
-    return (
+    applications = (
         db.query(VerificationApplication)
-        .filter(VerificationApplication.assigned_officer_id == current_user.id)
+        .filter(
+            VerificationApplication.assigned_officer_id == current_user.id
+        )
         .order_by(VerificationApplication.id.desc())
         .all()
     )
+
+    result = []
+
+    for application in applications:
+        instrument = (
+            db.query(Instrument)
+            .filter(Instrument.id == application.instrument_id)
+            .first()
+        )
+
+        shop = None
+        if instrument and instrument.shop_id:
+            shop = (
+                db.query(Shop)
+                .filter(Shop.id == instrument.shop_id)
+                .first()
+            )
+
+        user = (
+            db.query(User)
+            .filter(User.id == application.user_id)
+            .first()
+        )
+
+        result.append({
+            "id": application.id,
+            "user_id": application.user_id,
+            "instrument_id": application.instrument_id,
+            "assigned_officer_id": application.assigned_officer_id,
+            "status": application.status,
+            "priority": application.priority,
+            "scheduled_at": application.scheduled_at,
+            "created_at": application.created_at,
+            "notes": application.notes,
+
+            "instrument": instrument,
+            "shop": shop,
+            "user": user,
+
+            "business_name": shop.name if shop else None,
+            "shop_address": shop.address if shop else None,
+            "shop_gst_number": shop.gst_number if shop else None,
+            "shop_latitude": shop.latitude if shop else None,
+            "shop_longitude": shop.longitude if shop else None,
+        })
+
+    return result
 
 
 @router.post("/applications/{application_id}/ocr", response_model=OCRFieldResponse)

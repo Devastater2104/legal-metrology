@@ -134,6 +134,17 @@ class ApplicationCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class ApplicationUserSummary(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    organization: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class ApplicationResponse(ApplicationCreate):
     id: int
     user_id: int
@@ -142,6 +153,18 @@ class ApplicationResponse(ApplicationCreate):
     priority: str = "NORMAL"
     scheduled_at: Optional[datetime] = None
     created_at: datetime
+
+    # Detailed data used by the Officer mobile app
+    instrument: Optional[InstrumentResponse] = None
+    shop: Optional[ShopResponse] = None
+    user: Optional[ApplicationUserSummary] = None
+
+    # Flattened fields for mobile/backward compatibility
+    business_name: Optional[str] = None
+    shop_address: Optional[str] = None
+    shop_gst_number: Optional[str] = None
+    shop_latitude: Optional[float] = None
+    shop_longitude: Optional[float] = None
 
     class Config:
         from_attributes = True

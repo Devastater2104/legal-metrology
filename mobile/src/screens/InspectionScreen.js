@@ -27,7 +27,12 @@ export default function InspectionScreen() {
   const [photoUri, setPhotoUri] = useState(null);
   const [ocr, setOcr] = useState(null);
   const [ocrLoading, setOcrLoading] = useState(false);
-  const [gstNumber, setGstNumber] = useState('');
+  const [gstNumber, setGstNumber] = useState(
+    application?.shop?.gst_number ||
+    application?.shop_gst_number ||
+    ''
+  );
+  const [gstVerified, setGstVerified] = useState(false);
   const [observations, setObservations] = useState('');
   const [result, setResult] = useState('PASS');
   const [voiceListening, setVoiceListening] = useState(false);
@@ -211,7 +216,12 @@ export default function InspectionScreen() {
     }
 
     if (!gstNumber.trim()) {
-      setError('Enter the shop GST number before submitting the inspection.');
+      setError('Registered GST number is not available for this shop.');
+      return;
+    }
+
+    if (!gstVerified) {
+      setError('Confirm that the registered GST number matches the shop before submitting.');
       return;
     }
 
@@ -278,19 +288,87 @@ export default function InspectionScreen() {
 
       <View style={styles.detailCard}>
         <Text style={styles.sectionTitle}>1. Shop Details</Text>
-        <Text style={styles.label}>Shop GST Number *</Text>
-        <TextInput
-          value={gstNumber}
-          onChangeText={(text) => setGstNumber(text.toUpperCase())}
-          style={styles.input}
-          placeholder="Enter 15-character GSTIN"
-          placeholderTextColor="#94a3b8"
-          autoCapitalize="characters"
-          maxLength={15}
-        />
+        <Text style={styles.label}>Registered GST Number</Text>
+        <View
+          style={{
+            backgroundColor: '#f8fafc',
+            borderWidth: 1,
+            borderColor: '#cbd5e1',
+            borderRadius: 12,
+            padding: 14,
+            marginTop: 4,
+          }}
+        >
+          <Text
+            style={{
+              color: '#0f172a',
+              fontSize: 16,
+              fontWeight: '800',
+              letterSpacing: 0.5,
+            }}
+          >
+            {gstNumber || 'GST number not available'}
+          </Text>
+        </View>
+
         <Text style={styles.small}>
-          Enter the GSTIN of the shop/business being inspected.
+          This GST number was registered with the shop. Verify it against the
+          shop/business record before continuing.
         </Text>
+
+        <Pressable
+          onPress={() => {
+            if (gstNumber.trim()) {
+              setGstVerified((current) => !current);
+              setError('');
+            }
+          }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginTop: 14,
+            paddingVertical: 8,
+          }}
+        >
+          <View
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 6,
+              borderWidth: 2,
+              borderColor: gstVerified ? '#16a34a' : '#94a3b8',
+              backgroundColor: gstVerified ? '#16a34a' : '#fff',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 10,
+            }}
+          >
+            {gstVerified ? (
+              <Text
+                style={{
+                  color: '#fff',
+                  fontSize: 16,
+                  fontWeight: '900',
+                }}
+              >
+                ✓
+              </Text>
+            ) : null}
+          </View>
+
+          <Text
+            style={{
+              flex: 1,
+              color: gstVerified ? '#166534' : '#334155',
+              fontSize: 14,
+              fontWeight: '700',
+            }}
+          >
+            {gstVerified
+              ? 'GST number verified and matches the shop record'
+              : 'I confirm the GST number matches the shop/business'}
+          </Text>
+        </Pressable>
       </View>
 
       <View style={styles.detailCard}>
