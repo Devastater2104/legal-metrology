@@ -1,0 +1,209 @@
+"""Add shops and instrument shop/location metadata.
+
+Revision ID: 0006_shops_and_instrument_location
+Revises: 0005_gst_number_on_inspections
+Create Date: 2026-10-05
+"""
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision = "0006_shops_and_instrument_location"
+down_revision = "0005_gst_number_on_inspections"
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # 1. Create the canonical shop table.
+    op.create_table(
+        "shops",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "owner_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id"),
+            nullable=False,
+        ),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("gst_number", sa.String(length=15), nullable=True),
+        sa.Column("address", sa.String(), nullable=False),
+        # Nullable at DB level so legacy instruments can be migrated even
+        # when their old records do not contain GPS coordinates.
+        sa.Column("latitude", sa.Float(), nullable=True),
+        sa.Column("longitude", sa.Float(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=True),
+    )
+
+    op.create_index(
+        "ix_shops_id",
+        "shops",
+        ["id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_shops_owner_id",
+        "shops",
+        ["owner_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_shops_gst_number",
+        "shops",
+        ["gst_number"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_shops_created_at",
+        "shops",
+        ["created_at"],
+        unique=False,
+    )
+
+    # 2. Extend instruments for the new architecture.
+    op.add_column(
+        "instruments",
+        sa.Column(
+            "shop_id",
+            sa.Integer(),
+            sa.ForeignKey("shops.id"),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "instruments",
+        sa.Column(
+            "measurement_type",
+            sa.String(),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "instruments",
+        sa.Column(
+            "latitude",
+            sa.Float(),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "instruments",
+        sa.Column(
+            "longitude",
+            sa.Float(),
+            nullable=True,
+        ),
+    )
+
+    op.create_index(
+        "ix_instruments_shop_id",
+        "instruments",
+        ["shop_id"],
+        unique=False,
+    )
+
+    # 3. Backfill existing instruments into legacy shop records.
+    #
+    # Existing instruments only know the old `location` field. We create one
+    # shop per owner/location combination and attach those instruments to it.
+    # GST and GPS remain empty because the old schema did not store them.
+    connection = op.get_bind()
+
+    rows = connection.execute(
+        sa.text(
+            """
+            SELECT owner_id, location
+            FROM instruments
+            GROUP BY owner_id, location
+            ORDER BY owner_id
+            """
+        )
+    ).fetchall()
+
+    shop_counter = {}
+
+    for owner_id, location in rows:
+        shop_counter[owner_id] = shop_counter.get(owner_id, 0) + 1
+        suffix = shop_counter[owner_id]
+
+        if location:
+            shop_name = (
+                "Existing Shop"
+                if suffix == 1
+                else f"Existing Shop {suffix}"
+            )
+            address = location
+        else:
+            shop_name = (
+                "Existing Shop"
+                if suffix == 1
+                else f"Existing Shop {suffix}"
+            )
+            address = "Address not available"
+
+        result = connection.execute(
+            sa.text(
+                """
+                INSERT INTO shops
+                    (owner_id, name, gst_number, address, latitude, longitude, created_at)
+                VALUES
+                    (:owner_id, :name, NULL, :address, NULL, NULL, CURRENT_TIMESTAMP)
+                """
+            ),
+            {
+                "owner_id": owner_id,
+                "name": shop_name,
+                "address": address,
+            },
+        )
+
+        shop_id = result.lastrowid
+
+        if location is None:
+            connection.execute(
+                sa.text(
+                    """
+                    UPDATE instruments
+                    SET shop_id = :shop_id
+                    WHERE owner_id = :owner_id
+                      AND location IS NULL
+                    """
+                ),
+                {
+                    "shop_id": shop_id,
+                    "owner_id": owner_id,
+                },
+            )
+        else:
+            connection.execute(
+                sa.text(
+                    """
+                    UPDATE instruments
+                    SET shop_id = :shop_id
+                    WHERE owner_id = :owner_id
+                      AND location = :location
+                    """
+                ),
+                {
+                    "shop_id": shop_id,
+                    "owner_id": owner_id,
+                    "location": location,
+                },
+            )
+
+
+def downgrade():
+    # Keep the downgrade safe for SQLite.
+    with op.batch_alter_table("instruments") as batch_op:
+        batch_op.drop_index("ix_instruments_shop_id")
+        batch_op.drop_column("longitude")
+        batch_op.drop_column("latitude")
+        batch_op.drop_column("measurement_type")
+        batch_op.drop_column("shop_id")
+
+    op.drop_index("ix_shops_created_at", table_name="shops")
+    op.drop_index("ix_shops_gst_number", table_name="shops")
+    op.drop_index("ix_shops_owner_id", table_name="shops")
+    op.drop_index("ix_shops_id", table_name="shops")
+    op.drop_table("shops")

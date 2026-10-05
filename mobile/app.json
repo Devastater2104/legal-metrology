@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "e-MānakSetu Officer",
+    "slug": "emanaksetu-officer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "e-MānakSetu uses your location to record the inspection location.",
+        "NSCameraUsageDescription": "e-MānakSetu uses the camera to capture instrument photographs."
+      }
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
+      ]
+    }
+  }
+}

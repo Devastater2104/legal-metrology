@@ -1,0 +1,492 @@
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { extractInspectionInfo, submitInspection } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { styles } from '../styles';
+
+const demoVerifierResult = {
+  instrumentType: 'Electronic Weighing Scale',
+  verifierName: 'E-MānakSetu Smart Verifier',
+  maximumDeviation: '0.028 kg',
+  averageDeviation: '0.019 kg',
+  result: 'PASS',
+};
+
+export default function InspectionScreen() {
+  const route = useRoute();
+  const navigation = useNavigation();
+  const { token } = useAuth();
+  const application = route.params?.application || {};
+
+  const [location, setLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('Capturing location…');
+  const [photoUri, setPhotoUri] = useState(null);
+  const [ocr, setOcr] = useState(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [measurement, setMeasurement] = useState('');
+  const [observations, setObservations] = useState('');
+  const [result, setResult] = useState('PASS');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const [verifierState, setVerifierState] = useState('disconnected');
+  const [verifierResult, setVerifierResult] = useState(null);
+
+  useEffect(() => {
+    captureLocation();
+  }, []);
+
+  async function captureLocation() {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setLocationStatus('Location permission denied');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      setLocation({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        capturedAt: new Date().toISOString(),
+      });
+      setLocationStatus('Location captured');
+    } catch (e) {
+      setLocationStatus('Unable to capture location');
+    }
+  }
+
+  async function connectVerifier() {
+    if (verifierState !== 'disconnected') return;
+
+    setVerifierState('connecting');
+    setVerifierResult(null);
+
+    // Prototype-only visual connection sequence.
+    // Real BLE communication will replace this later.
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+
+    setVerifierState('connected');
+    setTimeout(() => {
+      setVerifierResult(demoVerifierResult);
+    }, 700);
+  }
+
+  function disconnectVerifier() {
+    setVerifierState('disconnected');
+    setVerifierResult(null);
+  }
+
+  async function capturePhoto() {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (permission.status !== 'granted') {
+      Alert.alert(
+        'Camera permission',
+        'Camera access is required to capture the instrument photo.',
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      allowsEditing: false,
+    });
+
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setPhotoUri(result.assets[0].uri);
+      setOcr(null);
+    }
+  }
+
+  async function runOcr() {
+    if (!photoUri) return;
+    setOcrLoading(true);
+    setError('');
+
+    try {
+      const data = await extractInspectionInfo(application.id, photoUri, token);
+      setOcr(data);
+    } catch (e) {
+      setError(`${e.message || 'OCR failed.'} Manual entry remains available.`);
+    } finally {
+      setOcrLoading(false);
+    }
+  }
+
+  function updateOcr(field, text) {
+    setOcr((current) => ({ ...(current || {}), [field]: text }));
+  }
+
+  async function submit() {
+    if (!location) {
+      setError('Capture the inspection location before submitting.');
+      return;
+    }
+
+    if (!measurement.trim() && !verifierResult) {
+      setError('Enter the inspection measurement or complete Smart Verifier testing.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+
+    try {
+      await submitInspection(
+        application.id,
+        {
+          measurement: measurement.trim() || verifierResult?.maximumDeviation || null,
+          observations: observations.trim() || null,
+          result: verifierResult?.result || result,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          captured_at: location.capturedAt,
+          ocr_data: ocr
+            ? {
+                manufacturer: ocr.manufacturer || null,
+                model: ocr.model || null,
+                serial_number: ocr.serial_number || null,
+                capacity: ocr.capacity || null,
+                raw_text: ocr.raw_text,
+                confidence: ocr.confidence,
+                confirmed: false,
+              }
+            : null,
+          photo_ids: ocr?.photo_id ? [ocr.photo_id] : [],
+        },
+        token,
+      );
+
+      Alert.alert(
+        'Inspection submitted',
+        'The inspection was successfully submitted.',
+        [{ text: 'OK', onPress: () => navigation.popToTop() }],
+      );
+    } catch (e) {
+      setError(e.message || 'Unable to submit inspection.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const verifierConnected = verifierState === 'connected';
+  const verifierConnecting = verifierState === 'connecting';
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scroll}>
+      <Pressable onPress={() => navigation.goBack()}>
+        <Text style={styles.back}>‹ Back</Text>
+      </Pressable>
+
+      <Text style={styles.title}>Field Inspection</Text>
+      <Text style={styles.muted}>Application #{application.id}</Text>
+
+      <View style={styles.detailCard}>
+        <Text style={styles.sectionTitle}>1. Location</Text>
+        <Text style={location ? styles.success : styles.warning}>{locationStatus}</Text>
+        {location ? (
+          <Text style={styles.small}>
+            {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+          </Text>
+        ) : null}
+        <Pressable onPress={captureLocation} style={styles.outlineLargeButton}>
+          <Text style={styles.outlineLargeButtonText}>Refresh GPS</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.detailCard}>
+        <Text style={styles.sectionTitle}>2. Smart e-MānakSetu Verifier</Text>
+        <Text style={styles.muted}>
+          Prototype connection preview. The physical verifier will perform the
+          measurement and calculations; the mobile app receives the final result.
+        </Text>
+
+        <View
+          style={{
+            marginTop: 14,
+            padding: 16,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: verifierConnected ? '#86efac' : '#bfdbfe',
+            backgroundColor: verifierConnected ? '#f0fdf4' : '#eff6ff',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#173f8a' }}>
+            E-MānakSetu Smart Verifier
+          </Text>
+
+          {verifierState === 'disconnected' ? (
+            <>
+              <Text style={{ marginTop: 8, color: '#64748b' }}>
+                Bluetooth verifier not connected
+              </Text>
+              <Pressable
+                onPress={connectVerifier}
+                style={[styles.primaryButton, { marginTop: 14 }]}
+              >
+                <Text style={styles.primaryButtonText}>Connect Verifier</Text>
+              </Pressable>
+            </>
+          ) : null}
+
+          {verifierConnecting ? (
+            <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+              <ActivityIndicator size="large" color="#173f8a" />
+              <Text
+                style={{
+                  marginTop: 10,
+                  fontWeight: '700',
+                  color: '#173f8a',
+                }}
+              >
+                Connecting to E-MānakSetu Smart Verifier…
+              </Text>
+              <Text style={{ marginTop: 5, color: '#64748b' }}>
+                Searching for verifier
+              </Text>
+            </View>
+          ) : null}
+
+          {verifierConnected ? (
+            <>
+              <View
+                style={{
+                  marginTop: 12,
+                  padding: 10,
+                  borderRadius: 10,
+                  backgroundColor: '#dcfce7',
+                }}
+              >
+                <Text style={{ color: '#166534', fontWeight: '800' }}>
+                  ● Connected
+                </Text>
+              </View>
+
+              {!verifierResult ? (
+                <View style={{ alignItems: 'center', paddingVertical: 18 }}>
+                  <ActivityIndicator color="#173f8a" />
+                  <Text style={{ marginTop: 8, color: '#64748b' }}>
+                    Receiving verification result…
+                  </Text>
+                </View>
+              ) : (
+                <View
+                  style={{
+                    marginTop: 14,
+                    padding: 14,
+                    borderRadius: 12,
+                    backgroundColor: '#ffffff',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: '#64748b' }}>
+                    Verification Result
+                  </Text>
+                  <Text
+                    style={{
+                      marginTop: 4,
+                      fontSize: 20,
+                      fontWeight: '900',
+                      color: '#173f8a',
+                    }}
+                  >
+                    {verifierResult.instrumentType}
+                  </Text>
+
+                  <View style={{ marginTop: 14 }}>
+                    <Text style={{ color: '#64748b' }}>Maximum deviation</Text>
+                    <Text
+                      style={{
+                        fontSize: 22,
+                        fontWeight: '900',
+                        color: '#0f172a',
+                      }}
+                    >
+                      {verifierResult.maximumDeviation}
+                    </Text>
+                  </View>
+
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ color: '#64748b' }}>Average deviation</Text>
+                    <Text
+                      style={{
+                        fontSize: 18,
+                        fontWeight: '800',
+                        color: '#0f172a',
+                      }}
+                    >
+                      {verifierResult.averageDeviation}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={{
+                      marginTop: 14,
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: '#dcfce7',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        textAlign: 'center',
+                        fontSize: 20,
+                        fontWeight: '900',
+                        color: '#166534',
+                      }}
+                    >
+                      ✓ {verifierResult.result}
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={{
+                      marginTop: 10,
+                      textAlign: 'center',
+                      fontSize: 11,
+                      color: '#64748b',
+                    }}
+                  >
+                    Prototype result — generated for demonstration until the
+                    physical verifier is connected.
+                  </Text>
+                </View>
+              )}
+
+              <Pressable
+                onPress={disconnectVerifier}
+                style={[styles.outlineLargeButton, { marginTop: 12 }]}
+              >
+                <Text style={styles.outlineLargeButtonText}>Disconnect</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.detailCard}>
+        <Text style={styles.sectionTitle}>3. Instrument Photo & OCR</Text>
+
+        <Pressable onPress={capturePhoto} style={styles.outlineLargeButton}>
+          <Text style={styles.outlineLargeButtonText}>Take Instrument Photo</Text>
+        </Pressable>
+
+        {photoUri ? <Image source={{ uri: photoUri }} style={styles.photo} /> : null}
+
+        <Pressable
+          onPress={runOcr}
+          disabled={!photoUri || ocrLoading}
+          style={[styles.primaryButton, (!photoUri || ocrLoading) && styles.disabled]}
+        >
+          {ocrLoading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.primaryButtonText}>Run OCR</Text>
+          )}
+        </Pressable>
+
+        {ocr ? (
+          <View style={styles.ocrBox}>
+            <Text style={styles.ocrTitle}>OCR Suggestions — editable</Text>
+            {['manufacturer', 'model', 'serial_number', 'capacity'].map((field) => (
+              <View key={field}>
+                <Text style={styles.label}>{field.replace('_', ' ')}</Text>
+                <TextInput
+                  value={ocr[field] || ''}
+                  onChangeText={(text) => updateOcr(field, text)}
+                  style={styles.input}
+                  placeholder={`Enter ${field.replace('_', ' ')}`}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.detailCard}>
+        <Text style={styles.sectionTitle}>4. Inspection Result</Text>
+
+        <Text style={styles.label}>Measurement</Text>
+        <TextInput
+          value={measurement}
+          onChangeText={setMeasurement}
+          style={styles.input}
+          placeholder="Enter manual measurement if required"
+          placeholderTextColor="#94a3b8"
+        />
+
+        {verifierResult ? (
+          <View
+            style={{
+              marginTop: 8,
+              padding: 10,
+              borderRadius: 10,
+              backgroundColor: '#eff6ff',
+            }}
+          >
+            <Text style={{ color: '#1e3a8a', fontWeight: '700' }}>
+              Smart Verifier result received. You may use it as the inspection result.
+            </Text>
+          </View>
+        ) : null}
+
+        <Text style={styles.label}>Observations</Text>
+        <TextInput
+          value={observations}
+          onChangeText={setObservations}
+          multiline
+          numberOfLines={4}
+          style={[styles.input, styles.textArea]}
+          placeholder="Enter observations"
+          placeholderTextColor="#94a3b8"
+        />
+
+        <Text style={styles.label}>Decision</Text>
+        <View style={styles.choiceRow}>
+          <Pressable
+            onPress={() => setResult('PASS')}
+            style={[styles.choice, result === 'PASS' && styles.choiceSelectedGreen]}
+          >
+            <Text style={styles.choiceText}>PASS</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setResult('FAIL')}
+            style={[styles.choice, result === 'FAIL' && styles.choiceSelectedRed]}
+          >
+            <Text style={styles.choiceText}>FAIL</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
+      <Pressable
+        onPress={submit}
+        disabled={submitting}
+        style={[styles.primaryButton, submitting && styles.disabled]}
+      >
+        {submitting ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.primaryButtonText}>Submit Inspection</Text>
+        )}
+      </Pressable>
+    </ScrollView>
+  );
+}

@@ -1,0 +1,770 @@
+import { Link } from "react-router-dom"
+import { useEffect, useState } from "react"
+
+import {
+  ArrowRight,
+  Award,
+  Bell,
+  CheckCircle2,
+  ClipboardList,
+  FileCheck2,
+  LogOut,
+  Plus,
+  Store,
+  TriangleAlert,
+  XCircle,
+} from "lucide-react"
+
+import { useAuth } from "../../context/AuthContext"
+import NotificationBell from "../../components/NotificationBell"
+import { getMyInstruments } from "../../services/instrumentService"
+import { getMyShops } from "../../services/shopService"
+import { getComplianceSummary } from "../../services/analyticsService"
+import logo from "../../assets/legal-metrology-logo.png"
+
+function UserDashboard() {
+  const { user, token, logout } = useAuth()
+
+  const [instrumentCount, setInstrumentCount] = useState(null)
+  const [instrumentError, setInstrumentError] = useState("")
+  const [shops, setShops] = useState([])
+  const [shopError, setShopError] = useState("")
+  const [compliance, setCompliance] = useState(null)
+
+  useEffect(() => {
+    async function loadDashboard() {
+      try {
+        const instruments = await getMyInstruments(token)
+        setInstrumentCount(instruments.length)
+      } catch (error) {
+        setInstrumentError(
+          error?.message || "Unable to load instruments."
+        )
+      }
+
+      try {
+        const shopsData = await getMyShops(token)
+        setShops(Array.isArray(shopsData) ? shopsData : [])
+      } catch (error) {
+        setShopError(
+          error?.message || "Unable to load shops."
+        )
+      }
+
+      try {
+        const summary = await getComplianceSummary(token)
+        setCompliance(summary)
+      } catch (error) {
+        console.error("Unable to load compliance summary:", error)
+      }
+    }
+
+    if (token) {
+      loadDashboard()
+    }
+  }, [token])
+
+  const shopCount = shops.length
+
+  const shopInstrumentCount = shops.reduce(
+    (total, shop) =>
+      total + Number(shop.instrument_count ?? 0),
+    0
+  )
+
+  const validCertificates = compliance?.valid_certificates ?? 0
+  const pendingApplications = compliance?.pending_applications ?? 0
+  const expiringCertificates = compliance?.expiring_certificates ?? 0
+  const expiredCertificates = compliance?.expired_certificates ?? 0
+  const revokedCertificates = compliance?.revoked_certificates ?? 0
+
+  const totalIssues =
+    expiringCertificates +
+    expiredCertificates +
+    revokedCertificates
+
+  return (
+    <div className="lm-app">
+      {/* Top navigation */}
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+          <Link
+            to="/user"
+            className="flex items-center"
+            aria-label="Legal Metrology User Dashboard"
+          >
+            <img
+              src={logo}
+              alt="Legal Metrology"
+              className="h-14 w-auto object-contain"
+            />
+          </Link>
+
+          <div className="flex items-center gap-4">
+            <NotificationBell />
+
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-semibold text-slate-900">
+                {user?.name || "User"}
+              </p>
+              <p className="text-xs text-slate-500">
+                Business / User
+              </p>
+            </div>
+
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline">Log out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        {/* Page heading */}
+        <div className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end">
+          <div>
+            <p className="mb-2 text-sm font-semibold uppercase tracking-wider text-blue-700">
+              User Portal
+            </p>
+
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950">
+              Welcome back, {user?.name || "User"}
+            </h1>
+
+            <p className="mt-2 max-w-2xl text-slate-600">
+              Manage your registered instruments, verification applications,
+              inspections and certificates from one place.
+            </p>
+          </div>
+
+          <Link
+            to="/user/shops/new"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
+          >
+            <Plus size={18} />
+            Add Shop
+          </Link>
+        </div>
+
+        {/* Overview cards */}
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Registered Shops
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {shopCount}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-blue-50 p-2.5 text-blue-700">
+                <Store size={20} />
+              </div>
+            </div>
+
+            <Link
+              to="/user/shops"
+              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-700 hover:text-blue-900"
+            >
+              View shops
+              <ArrowRight size={15} />
+            </Link>
+
+            {shopError && (
+              <p className="mt-2 text-xs text-red-600">
+                {shopError}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Pending Applications
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {compliance ? pendingApplications : "—"}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-amber-50 p-2.5 text-amber-700">
+                <ClipboardList size={20} />
+              </div>
+            </div>
+
+            <Link
+              to="/user/applications"
+              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-700 hover:text-blue-900"
+            >
+              View applications
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Valid Certificates
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {compliance ? validCertificates : "—"}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-green-50 p-2.5 text-green-700">
+                <Award size={20} />
+              </div>
+            </div>
+
+            <Link
+              to="/user/certificates"
+              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-700 hover:text-blue-900"
+            >
+              View certificates
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Compliance Alerts
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {compliance ? totalIssues : "—"}
+                </p>
+              </div>
+
+              <div
+                className={`rounded-lg p-2.5 ${
+                  totalIssues > 0
+                    ? "bg-red-50 text-red-700"
+                    : "bg-green-50 text-green-700"
+                }`}
+              >
+                {totalIssues > 0 ? (
+                  <TriangleAlert size={20} />
+                ) : (
+                  <CheckCircle2 size={20} />
+                )}
+              </div>
+            </div>
+
+            <p className="mt-4 text-sm text-slate-500">
+              {totalIssues > 0
+                ? "Action may be required"
+                : "No active certificate alerts"}
+            </p>
+          </div>
+        </section>
+
+        {/* Main dashboard grid */}
+        {/* My Shops */}
+        <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                My Shops
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Manage your business locations and the instruments registered at each location.
+              </p>
+            </div>
+
+            <Link
+              to="/user/shops/new"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+            >
+              <Plus size={16} />
+              Add Shop
+            </Link>
+          </div>
+
+          {shopError ? (
+            <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {shopError}
+            </div>
+          ) : shops.length === 0 ? (
+            <div className="mt-6 rounded-lg border border-dashed border-slate-300 p-8 text-center">
+              <Store
+                size={30}
+                className="mx-auto text-slate-300"
+              />
+
+              <p className="mt-3 font-medium text-slate-700">
+                No shops registered yet
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Register your first business location before adding measuring instruments.
+              </p>
+
+              <Link
+                to="/user/shops/new"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-900 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+              >
+                <Plus size={16} />
+                Add Your First Shop
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              {shops.map((shop) => (
+                <div
+                  key={shop.id}
+                  className="rounded-xl border border-slate-200 p-5 transition hover:border-blue-300 hover:shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-lg bg-blue-50 p-2.5 text-blue-700">
+                      <Store size={20} />
+                    </div>
+
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-slate-900">
+                        {shop.name}
+                      </h3>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        {shop.address}
+                      </p>
+
+                      {shop.gst_number && (
+                        <p className="mt-1 text-xs text-slate-400">
+                          GST: {shop.gst_number}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
+                    <div className="flex gap-5">
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Instruments
+                        </p>
+
+                        <p className="mt-1 font-semibold text-slate-900">
+                          {shop.instrument_count ?? 0}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Pending
+                        </p>
+
+                        <p className="mt-1 font-semibold text-slate-900">
+                          {shop.pending_verification_count ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Link
+                      to={`/user/shops/${shop.id}`}
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-900"
+                    >
+                      Open Shop
+                      <ArrowRight size={15} />
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-3">
+          {/* Quick actions */}
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  Quick actions
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Common tasks for managing your instruments.
+                </p>
+              </div>
+
+              <FileCheck2
+                className="text-slate-300"
+                size={26}
+              />
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Link
+                to="/user/shops"
+                className="group flex items-center justify-between rounded-lg border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-blue-50 p-2 text-blue-700">
+                    <Store size={18} />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      Manage my shops
+                    </p>
+
+                    <p className="text-xs text-slate-500">
+                      Add shops and manage their instruments
+                    </p>
+                  </div>
+                </div>
+
+                <ArrowRight
+                  size={17}
+                  className="text-slate-400 transition group-hover:translate-x-1 group-hover:text-blue-700"
+                />
+              </Link>
+
+              <Link
+                to="/user/applications/new"
+                className="group flex items-center justify-between rounded-lg border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-indigo-50 p-2 text-indigo-700">
+                    <ClipboardList size={18} />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      New verification application
+                    </p>
+
+                    <p className="text-xs text-slate-500">
+                      Submit an instrument for verification
+                    </p>
+                  </div>
+                </div>
+
+                <ArrowRight
+                  size={17}
+                  className="text-slate-400 transition group-hover:translate-x-1 group-hover:text-blue-700"
+                />
+              </Link>
+
+              <Link
+                to="/user/applications"
+                className="group flex items-center justify-between rounded-lg border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-amber-50 p-2 text-amber-700">
+                    <ClipboardList size={18} />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      Track applications
+                    </p>
+
+                    <p className="text-xs text-slate-500">
+                      Check verification and inspection progress
+                    </p>
+                  </div>
+                </div>
+
+                <ArrowRight
+                  size={17}
+                  className="text-slate-400 transition group-hover:translate-x-1 group-hover:text-blue-700"
+                />
+              </Link>
+
+              <Link
+                to="/user/certificates"
+                className="group flex items-center justify-between rounded-lg border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-green-50 p-2 text-green-700">
+                    <Award size={18} />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      View certificates
+                    </p>
+
+                    <p className="text-xs text-slate-500">
+                      Access issued certificates and verification QR
+                    </p>
+                  </div>
+                </div>
+
+                <ArrowRight
+                  size={17}
+                  className="text-slate-400 transition group-hover:translate-x-1 group-hover:text-blue-700"
+                />
+              </Link>
+            </div>
+          </div>
+
+          {/* Compliance health */}
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  Compliance health
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Current certificate status
+                </p>
+              </div>
+
+              {totalIssues === 0 ? (
+                <CheckCircle2
+                  className="text-green-600"
+                  size={24}
+                />
+              ) : (
+                <TriangleAlert
+                  className="text-amber-600"
+                  size={24}
+                />
+              )}
+            </div>
+
+            {!compliance ? (
+              <p className="mt-6 text-sm text-slate-500">
+                Loading compliance information...
+              </p>
+            ) : (
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm text-slate-600">
+                    <CheckCircle2
+                      size={16}
+                      className="text-green-600"
+                    />
+                    Valid
+                  </span>
+
+                  <span className="font-semibold text-slate-900">
+                    {validCertificates}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm text-slate-600">
+                    <TriangleAlert
+                      size={16}
+                      className="text-amber-600"
+                    />
+                    Expiring soon
+                  </span>
+
+                  <span className="font-semibold text-slate-900">
+                    {expiringCertificates}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm text-slate-600">
+                    <XCircle
+                      size={16}
+                      className="text-red-600"
+                    />
+                    Expired
+                  </span>
+
+                  <span className="font-semibold text-slate-900">
+                    {expiredCertificates}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm text-slate-600">
+                    <XCircle
+                      size={16}
+                      className="text-red-600"
+                    />
+                    Revoked
+                  </span>
+
+                  <span className="font-semibold text-slate-900">
+                    {revokedCertificates}
+                  </span>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4">
+                  <p className="text-xs leading-5 text-slate-500">
+                    {compliance.reverification_required > 0
+                      ? `${compliance.reverification_required} instrument(s) require reverification.`
+                      : "Your instruments currently have no reverification requirement."}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Instrument compliance details */}
+        <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                Instrument compliance
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Risk and verification status for your registered instruments.
+              </p>
+            </div>
+
+            <Link
+              to="/user/instruments"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-900"
+            >
+              Manage instruments
+              <ArrowRight size={16} />
+            </Link>
+          </div>
+
+          {!compliance ? (
+            <div className="mt-6 rounded-lg bg-slate-50 p-5 text-sm text-slate-500">
+              Loading instrument compliance...
+            </div>
+          ) : compliance.risks.length === 0 ? (
+            <div className="mt-6 rounded-lg border border-dashed border-slate-300 p-8 text-center">
+              <Store
+                size={28}
+                className="mx-auto text-slate-300"
+              />
+
+              <p className="mt-3 font-medium text-slate-700">
+                No instruments registered yet
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Register your first shop to begin the verification
+                process.
+              </p>
+
+              <Link
+                to="/user/shops/new"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-900 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+              >
+                <Plus size={16} />
+                Register instrument
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full min-w-[650px] text-left">
+                <thead>
+                  <tr className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
+                    <th className="pb-3 font-semibold">
+                      Instrument
+                    </th>
+
+                    <th className="pb-3 font-semibold">
+                      Certificate state
+                    </th>
+
+                    <th className="pb-3 font-semibold">
+                      Risk
+                    </th>
+
+                    <th className="pb-3 font-semibold">
+                      Details
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {compliance.risks.map((risk) => {
+                    const isHealthy = risk.level === "LOW"
+                    const isHigh = risk.level === "HIGH"
+
+                    return (
+                      <tr
+                        key={risk.instrument_id}
+                        className="border-b border-slate-100 last:border-0"
+                      >
+                        <td className="py-4 font-semibold text-slate-900">
+                          Instrument #{risk.instrument_id}
+                        </td>
+
+                        <td className="py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              risk.state === "VALID"
+                                ? "bg-green-50 text-green-700"
+                                : risk.state === "EXPIRED" ||
+                                    risk.state === "REVOKED"
+                                  ? "bg-red-50 text-red-700"
+                                  : "bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {risk.state.replaceAll("_", " ")}
+                          </span>
+                        </td>
+
+                        <td className="py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              isHealthy
+                                ? "bg-green-50 text-green-700"
+                                : isHigh
+                                  ? "bg-red-50 text-red-700"
+                                  : "bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {risk.level}
+                          </span>
+                        </td>
+
+                        <td className="max-w-md py-4 text-sm text-slate-600">
+                          {risk.reasons.join("; ")}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Account information */}
+        <section className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                Account
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Signed in as {user?.name || "User"} ·{" "}
+                {user?.role || "USER"}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Bell size={14} />
+              Notifications enabled
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+export default UserDashboard

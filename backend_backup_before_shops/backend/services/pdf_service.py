@@ -1,0 +1,762 @@
+import io
+from datetime import datetime
+from pathlib import Path
+from textwrap import wrap
+
+import qrcode
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+
+from config import PUBLIC_APP_URL
+from models import Certificate, Inspection, Instrument, User
+from services.compliance_service import certificate_state
+
+
+# ---------------------------------------------------------------------------
+# Brand
+# ---------------------------------------------------------------------------
+
+NAVY = colors.HexColor("#0B2A4A")
+BLUE = colors.HexColor("#1557A6")
+LIGHT_BLUE = colors.HexColor("#EAF2FB")
+GREEN = colors.HexColor("#16834A")
+LIGHT_GREEN = colors.HexColor("#EAF7EF")
+SLATE = colors.HexColor("#475569")
+LIGHT_SLATE = colors.HexColor("#F8FAFC")
+BORDER = colors.HexColor("#D7E0EA")
+DARK = colors.HexColor("#0F172A")
+WHITE = colors.white
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def draw_wrapped_text(
+    document,
+    text,
+    x,
+    y,
+    max_chars,
+    font="Helvetica",
+    size=9,
+    leading=12,
+    color=DARK,
+):
+    """
+    Draw text with simple character-based wrapping.
+    Returns the final y-coordinate.
+    """
+    document.setFont(font, size)
+    document.setFillColor(color)
+
+    text = str(text or "-")
+    lines = wrap(text, width=max_chars) or ["-"]
+
+    for line in lines:
+        document.drawString(x, y, line)
+        y -= leading
+
+    return y
+
+
+def draw_section_header(document, title, x, y, section_width):
+    """
+    Draw a clean section heading with a blue accent.
+    """
+    document.setFillColor(NAVY)
+    document.roundRect(
+        x,
+        y - 20,
+        section_width,
+        22,
+        5,
+        fill=1,
+        stroke=0,
+    )
+
+    document.setFillColor(WHITE)
+    document.setFont("Helvetica-Bold", 9)
+    document.drawString(x + 10, y - 13, title.upper())
+
+    return y - 34
+
+
+def draw_field(
+    document,
+    label,
+    value,
+    x,
+    y,
+    label_width=110,
+    value_width=190,
+):
+    """
+    Draw one certificate field.
+    """
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 8)
+
+    document.drawString(x, y, label.upper())
+
+    document.setFillColor(DARK)
+    document.setFont("Helvetica", 9)
+
+    value_text = str(value or "-")
+    wrapped = wrap(value_text, width=32 if value_width < 200 else 45)
+
+    if not wrapped:
+        wrapped = ["-"]
+
+    document.drawString(x + label_width, y, wrapped[0])
+
+    current_y = y - 12
+
+    for extra_line in wrapped[1:]:
+        document.drawString(x + label_width, current_y, extra_line)
+        current_y -= 12
+
+    return current_y - 7
+
+
+def draw_status_badge(document, status, x, y):
+    """
+    Draw certificate status badge.
+    """
+    status_text = str(status or "UNKNOWN").upper()
+
+    if status_text == "VALID":
+        fill = LIGHT_GREEN
+        text = GREEN
+    elif status_text in {"EXPIRED", "REVOKED"}:
+        fill = colors.HexColor("#FDECEC")
+        text = colors.HexColor("#B42318")
+    else:
+        fill = colors.HexColor("#FFF5E6")
+        text = colors.HexColor("#A15C00")
+
+    badge_width = 72
+    badge_height = 22
+
+    document.setFillColor(fill)
+    document.roundRect(
+        x,
+        y - badge_height + 4,
+        badge_width,
+        badge_height,
+        11,
+        fill=1,
+        stroke=0,
+    )
+
+    document.setFillColor(text)
+    document.setFont("Helvetica-Bold", 8)
+    document.drawCentredString(
+        x + badge_width / 2,
+        y - 10,
+        status_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Certificate PDF
+# ---------------------------------------------------------------------------
+
+def generate_certificate_pdf(
+    certificate: Certificate,
+    owner: User,
+    instrument: Instrument,
+    inspection: Inspection,
+    officer: User,
+) -> bytes:
+    buffer = io.BytesIO()
+
+    document = canvas.Canvas(buffer, pagesize=A4)
+
+    width, height = A4
+
+    # -----------------------------------------------------------------------
+    # URLs / QR
+    # -----------------------------------------------------------------------
+
+    verification_url = (
+        f"{PUBLIC_APP_URL.rstrip('/')}/verify/"
+        f"{certificate.certificate_number}"
+    )
+
+    qr_image = qrcode.make(verification_url)
+
+    qr_buffer = io.BytesIO()
+    qr_image.save(qr_buffer, format="PNG")
+    qr_buffer.seek(0)
+
+    # -----------------------------------------------------------------------
+    # Metadata
+    # -----------------------------------------------------------------------
+
+    document.setTitle(
+        f"Legal Metrology Certificate "
+        f"{certificate.certificate_number}"
+    )
+    document.setAuthor("Legal Metrology Digital Verification Platform")
+    document.setSubject("Certificate of Verification")
+
+    # -----------------------------------------------------------------------
+    # Page background
+    # -----------------------------------------------------------------------
+
+    margin = 36
+
+    document.setFillColor(WHITE)
+    document.rect(
+        0,
+        0,
+        width,
+        height,
+        fill=1,
+        stroke=0,
+    )
+
+    # Outer border
+    document.setStrokeColor(BORDER)
+    document.setLineWidth(1)
+    document.roundRect(
+        margin,
+        margin,
+        width - 2 * margin,
+        height - 2 * margin,
+        10,
+        fill=0,
+        stroke=1,
+    )
+
+    # -----------------------------------------------------------------------
+    # Header
+    # -----------------------------------------------------------------------
+
+    header_top = height - 48
+
+    # Navy header strip
+    document.setFillColor(NAVY)
+    document.roundRect(
+        margin + 1,
+        header_top - 92,
+        width - 2 * margin - 2,
+        92,
+        9,
+        fill=1,
+        stroke=0,
+    )
+
+    # Logo
+    logo_path = (
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "legal-metrology-logo.png"
+    )
+
+    if logo_path.exists():
+        try:
+            logo = ImageReader(str(logo_path))
+
+            logo_width = 235
+            logo_height = 62
+
+            document.drawImage(
+                logo,
+                width / 2 - logo_width / 2,
+                header_top - 72,
+                width=logo_width,
+                height=logo_height,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception:
+            # Keep PDF generation working even if the logo cannot be loaded.
+            document.setFillColor(WHITE)
+            document.setFont("Helvetica-Bold", 18)
+            document.drawCentredString(
+                width / 2,
+                header_top - 42,
+                "LEGAL METROLOGY",
+            )
+    else:
+        document.setFillColor(WHITE)
+        document.setFont("Helvetica-Bold", 18)
+        document.drawCentredString(
+            width / 2,
+            header_top - 42,
+            "LEGAL METROLOGY",
+        )
+
+    # -----------------------------------------------------------------------
+    # Certificate heading
+    # -----------------------------------------------------------------------
+
+    y = header_top - 122
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 8)
+    document.drawCentredString(
+        width / 2,
+        y,
+        "DIGITAL VERIFICATION & CERTIFICATION PLATFORM",
+    )
+
+    y -= 26
+
+    document.setFillColor(NAVY)
+    document.setFont("Helvetica-Bold", 18)
+    document.drawCentredString(
+        width / 2,
+        y,
+        "CERTIFICATE OF VERIFICATION",
+    )
+
+    y -= 16
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 8)
+    document.drawCentredString(
+        width / 2,
+        y,
+        "Instrument verification record",
+    )
+
+    # -----------------------------------------------------------------------
+    # Certificate number + status
+    # -----------------------------------------------------------------------
+
+    y -= 30
+
+    card_x = margin + 16
+    card_width = width - 2 * margin - 32
+    card_height = 54
+
+    document.setFillColor(LIGHT_BLUE)
+    document.roundRect(
+        card_x,
+        y - card_height + 5,
+        card_width,
+        card_height,
+        7,
+        fill=1,
+        stroke=0,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 7)
+    document.drawString(
+        card_x + 14,
+        y - 15,
+        "CERTIFICATE NUMBER",
+    )
+
+    document.setFillColor(NAVY)
+    document.setFont("Helvetica-Bold", 15)
+    document.drawString(
+        card_x + 14,
+        y - 34,
+        certificate.certificate_number,
+    )
+
+    status = certificate_state(certificate)
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 7)
+    document.drawString(
+        card_x + card_width - 105,
+        y - 15,
+        "STATUS",
+    )
+
+    draw_status_badge(
+        document,
+        status,
+        card_x + card_width - 90,
+        y - 12,
+    )
+
+    y -= card_height + 20
+
+    # -----------------------------------------------------------------------
+    # Holder / instrument information
+    # -----------------------------------------------------------------------
+
+    content_x = margin + 16
+    content_width = width - 2 * margin - 32
+
+    y = draw_section_header(
+        document,
+        "Certificate & Instrument Details",
+        content_x,
+        y,
+        content_width,
+    )
+
+    column_gap = 18
+    column_width = (content_width - column_gap) / 2
+
+    left_x = content_x
+    right_x = content_x + column_width + column_gap
+
+    left_y = y
+    right_y = y
+
+    left_fields = [
+        ("Owner / Business", owner.name),
+        ("Instrument Type", instrument.instrument_type),
+        ("Manufacturer", instrument.manufacturer),
+        ("Model", instrument.model or "-"),
+    ]
+
+    right_fields = [
+        ("Serial Number", instrument.serial_number),
+        ("Location", instrument.location or "-"),
+        ("Measurement", inspection.measurement or "-"),
+        ("Inspection Result", inspection.result or "-"),
+    ]
+
+    for label, value in left_fields:
+        left_y = draw_field(
+            document,
+            label,
+            value,
+            left_x,
+            left_y,
+            label_width=92,
+            value_width=column_width - 92,
+        )
+
+    for label, value in right_fields:
+        right_y = draw_field(
+            document,
+            label,
+            value,
+            right_x,
+            right_y,
+            label_width=92,
+            value_width=column_width - 92,
+        )
+
+    y = min(left_y, right_y) - 8
+
+    # -----------------------------------------------------------------------
+    # Verification validity
+    # -----------------------------------------------------------------------
+
+    y = draw_section_header(
+        document,
+        "Certificate Validity",
+        content_x,
+        y,
+        content_width,
+    )
+
+    issued_date = (
+        certificate.issued_at.strftime("%d %B %Y")
+        if certificate.issued_at
+        else "-"
+    )
+
+    expiry_date = (
+        certificate.expires_at.strftime("%d %B %Y")
+        if certificate.expires_at
+        else "-"
+    )
+
+    validity_card_y = y
+
+    # Two date cards
+    half_width = (content_width - 12) / 2
+
+    document.setFillColor(LIGHT_SLATE)
+    document.setStrokeColor(BORDER)
+
+    document.roundRect(
+        content_x,
+        validity_card_y - 50,
+        half_width,
+        50,
+        6,
+        fill=1,
+        stroke=1,
+    )
+
+    document.roundRect(
+        content_x + half_width + 12,
+        validity_card_y - 50,
+        half_width,
+        50,
+        6,
+        fill=1,
+        stroke=1,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 7)
+    document.drawString(
+        content_x + 12,
+        validity_card_y - 16,
+        "ISSUED DATE",
+    )
+
+    document.drawString(
+        content_x + half_width + 24,
+        validity_card_y - 16,
+        "VALID UNTIL",
+    )
+
+    document.setFillColor(DARK)
+    document.setFont("Helvetica-Bold", 10)
+
+    document.drawString(
+        content_x + 12,
+        validity_card_y - 34,
+        issued_date,
+    )
+
+    document.drawString(
+        content_x + half_width + 24,
+        validity_card_y - 34,
+        expiry_date,
+    )
+
+    y -= 68
+
+    # -----------------------------------------------------------------------
+    # Inspection officer
+    # -----------------------------------------------------------------------
+
+    y = draw_section_header(
+        document,
+        "Inspection Authority",
+        content_x,
+        y,
+        content_width,
+    )
+
+    officer_box_y = y
+
+    document.setFillColor(LIGHT_SLATE)
+    document.setStrokeColor(BORDER)
+
+    document.roundRect(
+        content_x,
+        officer_box_y - 48,
+        content_width,
+        48,
+        6,
+        fill=1,
+        stroke=1,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 7)
+    document.drawString(
+        content_x + 12,
+        officer_box_y - 16,
+        "INSPECTING OFFICER",
+    )
+
+    document.setFillColor(DARK)
+    document.setFont("Helvetica-Bold", 10)
+    document.drawString(
+        content_x + 12,
+        officer_box_y - 34,
+        officer.name,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 8)
+    document.drawRightString(
+        content_x + content_width - 12,
+        officer_box_y - 34,
+        "Legal Metrology Inspection Record",
+    )
+
+    y -= 65
+
+    # -----------------------------------------------------------------------
+    # Verification block with QR
+    # -----------------------------------------------------------------------
+
+    verify_height = 118
+    verify_y = y
+
+    document.setFillColor(LIGHT_BLUE)
+    document.roundRect(
+        content_x,
+        verify_y - verify_height,
+        content_width,
+        verify_height,
+        8,
+        fill=1,
+        stroke=0,
+    )
+
+    document.setFillColor(NAVY)
+    document.setFont("Helvetica-Bold", 11)
+    document.drawString(
+        content_x + 16,
+        verify_y - 22,
+        "VERIFY THIS CERTIFICATE",
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 8)
+
+    verification_text = (
+        "Scan the QR code to verify the certificate status "
+        "and authenticity record online."
+    )
+
+    draw_wrapped_text(
+        document,
+        verification_text,
+        content_x + 16,
+        verify_y - 39,
+        max_chars=58,
+        font="Helvetica",
+        size=8,
+        leading=11,
+        color=SLATE,
+    )
+
+    # URL
+    document.setFillColor(BLUE)
+    document.setFont("Helvetica", 7)
+
+    url_lines = wrap(verification_url, width=65)
+
+    url_y = verify_y - 67
+
+    for line in url_lines[:2]:
+        document.drawString(
+            content_x + 16,
+            url_y,
+            line,
+        )
+        url_y -= 10
+
+    # QR
+    qr_size = 82
+
+    document.drawImage(
+        ImageReader(qr_buffer),
+        content_x + content_width - qr_size - 14,
+        verify_y - qr_size - 17,
+        width=qr_size,
+        height=qr_size,
+        preserveAspectRatio=True,
+        mask="auto",
+    )
+
+    y -= verify_height + 18
+
+    # -----------------------------------------------------------------------
+    # Integrity hash
+    # -----------------------------------------------------------------------
+
+    hash_height = 55
+
+    document.setFillColor(LIGHT_SLATE)
+    document.setStrokeColor(BORDER)
+
+    document.roundRect(
+        content_x,
+        y - hash_height,
+        content_width,
+        hash_height,
+        6,
+        fill=1,
+        stroke=1,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica-Bold", 7)
+    document.drawString(
+        content_x + 12,
+        y - 15,
+        "DOCUMENT INTEGRITY • SHA-256",
+    )
+
+    document.setFillColor(DARK)
+    document.setFont("Courier", 7)
+
+    integrity_hash = certificate.integrity_hash or "-"
+
+    hash_lines = wrap(
+        integrity_hash,
+        width=92,
+    )
+
+    hash_y = y - 31
+
+    for line in hash_lines[:2]:
+        document.drawString(
+            content_x + 12,
+            hash_y,
+            line,
+        )
+        hash_y -= 9
+
+    # -----------------------------------------------------------------------
+    # Footer
+    # -----------------------------------------------------------------------
+
+    footer_y = margin + 23
+
+    document.setStrokeColor(BORDER)
+    document.setLineWidth(0.7)
+
+    document.line(
+        content_x,
+        footer_y + 13,
+        content_x + content_width,
+        footer_y + 13,
+    )
+
+    document.setFillColor(SLATE)
+    document.setFont("Helvetica", 6.5)
+
+    document.drawString(
+        content_x,
+        footer_y,
+        "Digital certificate generated by the Legal Metrology platform.",
+    )
+
+    document.drawRightString(
+        content_x + content_width,
+        footer_y,
+        "Prototype system • SHA-256 integrity metadata",
+    )
+
+    document.setFont("Helvetica-Oblique", 6.5)
+
+    document.drawString(
+        content_x,
+        footer_y - 10,
+        "This document is not an official government digital signature.",
+    )
+
+    generated_at = datetime.utcnow().strftime(
+        "%d %B %Y, %H:%M UTC"
+    )
+
+    document.drawRightString(
+        content_x + content_width,
+        footer_y - 10,
+        f"Generated {generated_at}",
+    )
+
+    # -----------------------------------------------------------------------
+    # Finish
+    # -----------------------------------------------------------------------
+
+    document.showPage()
+    document.save()
+
+    return buffer.getvalue()

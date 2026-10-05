@@ -1,0 +1,23 @@
+import os
+
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./legal_metrology.db")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60")))
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "30"))
+EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = int(os.getenv("EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES", "60"))
+CERTIFICATE_EXPIRY_WARNING_DAYS = int(os.getenv("CERTIFICATE_EXPIRY_WARNING_DAYS", "30"))
+CERTIFICATE_VALIDITY_DAYS = int(os.getenv("CERTIFICATE_VALIDITY_DAYS", "365"))
+PUBLIC_APP_URL = os.getenv("PUBLIC_APP_URL", "http://127.0.0.1:5173")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/auth/google/callback")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if not JWT_SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY must be set in the environment")
